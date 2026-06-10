@@ -50,6 +50,7 @@ results/
 llmTests/
 data/rule_eval/output/
 *.csv
+!*dirty_lab.csv
 !*.csv.example
 
 # R plots output
