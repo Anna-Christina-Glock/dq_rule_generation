@@ -14,8 +14,8 @@ from datetime import datetime
 import threading
 import logging
 
-from .llm_utils import LLMClient
-from .rule_gen_prompt import generate_prompt
+from llm_utils import LLMClient
+from rule_gen_prompt import generate_prompt
 
 # Configure logging
 logging.basicConfig(
@@ -204,12 +204,19 @@ def main_rule_gen(
                 
                 # Thread configuration
                 thread_count = parameter_config.get("threadCount", 52)
+                if thread_count > len(csv_df_dirty):
+                    thread_count = len(csv_df_dirty)
                 threads = [None] * thread_count
                 i = 0
                 
-                logger.info(f"Processing {len(csv_df_clean)} rows with batch size {thread_count}")
-                
-                for index, row in csv_df_clean.iterrows():
+                if len(csv_df_clean) <= len(csv_df_dirty):
+                    logger.info(f"Processing {len(csv_df_clean)} rows with batch size {thread_count}")
+                    processDf = csv_df_clean
+                else:
+                    logger.info(f"Processing {len(csv_df_dirty)} rows with batch size {thread_count}")
+                    processDf = csv_df_dirty
+
+                for index, row in processDf.iterrows():
                     logger.info(f'Row: {index}')
                     
                     threads[i] = threading.Thread(

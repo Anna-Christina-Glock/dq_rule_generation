@@ -29,46 +29,6 @@ def getF1(precision, recall):
                   2 * precision * recall / (precision + recall))
     return f1
 
-
-def load_latest_per_unique_file(base_dir, prefix='resDf_all__', extension='.csv'):
-    """
-    Get the latest file for each unique base name.
-    
-    Args:
-        base_dir: Directory to search in
-        prefix: File name prefix to match
-        extension: File extension to match
-        
-    Returns:
-        Dictionary mapping base names to (full_path, mtime) tuples
-    """
-    file_groups = defaultdict(list)
-    
-    for root, dirs, files in os.walk(base_dir):
-        for f in files:
-            if f.startswith(prefix) and f.endswith(extension):
-                full_path = os.path.join(root, f)
-                try:
-                    mtime = os.path.getmtime(full_path)
-                    
-                    match = re.match(
-                        r'resDf_all__\d+_\d+_\d{2}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+\.csv)',
-                        f
-                    )
-                    if match:
-                        base_name = f"{'_'.join(f.split('_')[3:5])}_{match.group(1)}"
-                        file_groups[base_name].append((full_path, mtime))
-                except FileNotFoundError:
-                    print(f"Warning: File not found: {full_path}")
-    
-    latest_per_base = {}
-    for base_name, files_info in file_groups.items():
-        latest = max(files_info, key=lambda x: x[1])
-        latest_per_base[base_name] = latest
-    
-    return latest_per_base
-
-
 def load_and_process_data(getLatestFiles=True, dirStr=None):
     """
     Load CSV files and process data similar to the R code.
@@ -79,27 +39,12 @@ def load_and_process_data(getLatestFiles=True, dirStr=None):
         
     Returns:
         Tuple of (sumEvalResAllDf, all_exceptionLi, ruleEvalResAll)
-    """
-    if dirStr is None:
-        dirStr = os.environ.get('EVAL_RESULT_DIR', 'llmTests/res/ruleGen/RuleMetrik/server/all/')
-        
-        alt_paths = [
-            'llmTests/res/ruleGen/RuleMetrik/',
-            'data/rule_eval/output/',
-            'C:\\Users\\glock\\Documents\\Projekt\\DANTE\\QuanTD\\code\\llmTests\\res\\ruleGen\\RuleMetrik\\'
-        ]
-        
-        if not os.path.exists(dirStr):
-            for alt_path in alt_paths:
-                if os.path.exists(alt_path):
-                    dirStr = alt_path
-                    break
-    
+    """    
     if getLatestFiles:
         fnameVec = load_latest_per_unique_file(dirStr)
         fnameVec = [fnameVec[x][0] for x in fnameVec if 'ExcecPara' not in x and 'resTimeLi' not in x]
     else:
-        fnameVec = [f for f in os.listdir(dirStr) if f.endswith('.csv') and f.startswith('resDf_')]
+        fnameVec = [f for f in os.listdir(dirStr) if f.endswith('.csv') and f.startswith('resDf_') and 'ExcecPara' not in f and 'resTimeLi' not in f]
     
     print(f"dirStr: {dirStr}")
     print(f"Found {len(fnameVec)} CSV files")
@@ -119,6 +64,30 @@ def load_and_process_data(getLatestFiles=True, dirStr=None):
             ruleEvalRes = pd.read_csv(os.path.join(dirStr, fname))
             fname_display = fname
         
+        # Key mapping for camelCase (legacy) to snake_case (new)
+        # This allows the plotter to work with both old and new file formats
+        key_mapping = {
+            'rule_Count': 'rule_count',
+            'precision_perRow': 'precision_per_row',
+            'recall_perRow': 'recall_per_row',
+            'precision_perRuleCol': 'precision_per_rule_col',
+            'recall_perRuleCol': 'recall_per_rule_col',
+            'errRule': 'err_rule',
+            'numErr': 'num_err',
+            'numPerRule': 'num_per_rule'
+        }
+        
+        # Rename columns if snake_case versions exist
+        for old_key, new_key in key_mapping.items():
+            if old_key not in ruleEvalRes.columns and new_key in ruleEvalRes.columns:
+                ruleEvalRes = ruleEvalRes.rename(columns={new_key: old_key})
+        
+        # Convert key metric columns to numeric to prevent string arithmetic errors
+        metric_cols = ['precision_perRow', 'recall_perRow', 'precision_perRuleCol', 'recall_perRuleCol']
+        for col in metric_cols:
+            if col in ruleEvalRes.columns:
+                ruleEvalRes[col] = pd.to_numeric(ruleEvalRes[col], errors='coerce')
+        
         parts = fname_display.split('_')
         promptId = parts[3] if len(parts) > 3 else 'unknown'
         ruleInfo = parts[4] if len(parts) > 4 else 'unknown'
@@ -129,9 +98,9 @@ def load_and_process_data(getLatestFiles=True, dirStr=None):
             datasetName = parts[8] if len(parts) > 8 else 'unknown'
         
         promptInfo_map = {
-            '0': 'Dirty & Clean',
-            '1': 'Just Dirty',
-            '2': 'Dirty & Class'
+            '8': 'Dirty & Clean',
+            '9': 'Just Dirty',
+            '10': 'Dirty & Type'
         }
         promptInfo = promptInfo_map.get(promptId, f'unknown_{promptId}')
         
@@ -150,6 +119,9 @@ def load_and_process_data(getLatestFiles=True, dirStr=None):
         
         ruleEvalRes['f1_perRow'] = getF1(ruleEvalRes['precision_perRow'], ruleEvalRes['recall_perRow'])
         ruleEvalRes['f1_perRuleCol'] = getF1(ruleEvalRes['precision_perRuleCol'], ruleEvalRes['recall_perRuleCol'])
+        
+        # Add numPerRule (count per errRule) - this is calculated, not in the raw data
+        ruleEvalRes['numPerRule'] = ruleEvalRes.groupby('errRule')['errRule'].transform('count')
         
         grouped = ruleEvalRes.groupby(['errRule', 'numErr', 'numPerRule'])
         
@@ -239,7 +211,13 @@ def transform_data_for_plotting(sumEvalResAllDf):
         'justDirty': 'Just Dirty'
     })
     
-    grouped = sumEvalResAllDf_filtered.groupby(['fileInfo_clean', 'Modelname_short', 'datasetName', 'errRule'])
+    # Ensure promptId column exists for plotting
+    if 'promptId' not in sumEvalResAllDf_filtered.columns and 'prompt' in sumEvalResAllDf_filtered.columns:
+        # Map prompt descriptions back to IDs for plotting
+        prompt_id_map = {'Dirty & Clean': '0', 'Dirty & Type': '1', 'Just Dirty': '2'}
+        sumEvalResAllDf_filtered['promptId'] = sumEvalResAllDf_filtered['prompt'].map(prompt_id_map)
+    
+    grouped = sumEvalResAllDf_filtered.groupby(['fileInfo_clean', 'Modelname_short', 'datasetName', 'errRule', 'promptId'])
     
     sumEvalResAllDf_filtered_agg = grouped.agg({
         'mean_f1_per_errRule': 'mean',
@@ -252,7 +230,7 @@ def transform_data_for_plotting(sumEvalResAllDf):
     
     sumEvalResAllDf_filtered_agg['fileInfo_cat'] = pd.Categorical(
         sumEvalResAllDf_filtered_agg['fileInfo_clean'],
-        categories=['Just Dirty', 'Dirty & Class', 'Dirty & Clean'],
+        categories=['Just Dirty', 'Dirty & Type', 'Dirty & Clean'],
         ordered=True
     )
     
@@ -294,40 +272,73 @@ def transform_data_for_plotting(sumEvalResAllDf):
     return sumEvalResAllDf_filtered_agg
 
 
-def create_model_comparison_plot(sumEvalResAllDf_filtered, dataset_name='PCI', output_dir=None):
+def create_model_comparison_plot(sumEvalResAllDf_filtered, dataset_name='PCI', output_dir=None, use_f1=True):
     """
-    Create a model comparison scatter plot (Precision vs Recall per rule) for a specific dataset.
+    Create a model comparison scatter plot for a specific dataset.
+    Matches logic from rule_eval_all_plots_clean.ipynb.
     
     Args:
         sumEvalResAllDf_filtered: Transformed evaluation results dataframe
         dataset_name: Name of the dataset to filter (default: 'PCI')
         output_dir: Directory to save plots. If None, uses default path
+        use_f1: If True, plots F1 per Row. If False, plots Precision/Recall per Row.
         
     Returns:
         plotnine ggplot object
     """
-    from plotnine import ggplot, geom_point, aes, facet_grid, theme_bw, labs, theme, element_text, scale_color_discrete, scale_shape_discrete, ylab, xlab
+    from plotnine import ggplot, geom_point, aes, facet_grid, theme_bw, labs, theme, element_text, scale_color_manual, scale_shape_manual, ylab, xlab
     
-    # Filter for the specific dataset
-    df = sumEvalResAllDf_filtered[sumEvalResAllDf_filtered['datasetName'] == dataset_name].copy()
+    # Filter for the specific dataset (case-insensitive)
+    df = sumEvalResAllDf_filtered[sumEvalResAllDf_filtered['datasetName'].str.lower() == dataset_name.lower()].copy()
+    
+    # Check if data is empty and provide helpful error
+    if len(df) == 0:
+        print(f"Error: No data found for dataset '{dataset_name}'. Available datasets in results: {sumEvalResAllDf_filtered['datasetName'].unique().tolist()}")
+        return None
+    
     
     # Map prompt IDs to descriptions
     prompt_map = {
         '0': 'Dirty & Clean',
-        '1': 'Dirty & Class',
-        '2': 'Just Dirty'
+        '1': 'Dirty & Type',
+        '2': 'Just Dirty',
+        '8': 'Dirty & Clean',
+        '9': 'Dirty & Type',
+        '10': 'Just Dirty'
     }
     df['promptId'] = df['promptId'].astype(str).replace(prompt_map)
     
+    # Determine which metrics to plot based on use_f1
+    if use_f1:
+        value_vars = ['mean_f1_per_errRow']
+        y_label = 'F1'
+    else:
+        value_vars = ['mean_precision_per_errRow', 'mean_recall_per_errRow']
+        y_label = 'Precision / Recall'
+    
+    # Melt the dataframe to long format for plotnine
+    # We use errRuleStr as the X axis to match the notebook
+    id_vars = ['errRuleStr', 'promptId', 'Modelname_short', 'errRule']
+    df_long = df.melt(
+        id_vars=id_vars,
+        value_vars=value_vars,
+        var_name='variable',
+        value_name='value'
+    )
+    
+    # Define model-based colors and shapes to match notebook
+    model_colors = {'GLM-4.7': '#1f77b4', 'Qwen3-Coder': '#ff7f0e', 'Gemma-4': '#2ca02c'}
+    model_shapes = {'GLM-4.7': 'o', 'Qwen3-Coder': '^', 'Gemma-4': 'v'}
+    
     # Create the plot
     p = (
-        ggplot(df, aes(x='xVal', y='value', color='variable', shape='variable'))
-        + geom_point(size=2)
+        ggplot(df_long, aes(x='errRuleStr', y='value', color='Modelname_short', shape='Modelname_short'))
+        + geom_point(size=3, stroke=2)
         + facet_grid('promptId ~ Modelname_short', scales='free')
         + theme_bw()
-        + ylab('Precision and Recall')
-        + xlab('Rule')
-        + labs(color='Metric', shape='Metric')
+        + ylab(y_label)
+        + xlab('Error Class')
+        + labs(color='Model', shape='Model')
         + theme(
             axis_title_x=element_text(size=14),
             axis_title_y=element_text(size=14),
@@ -339,14 +350,8 @@ def create_model_comparison_plot(sumEvalResAllDf_filtered, dataset_name='PCI', o
             figure_size=(12, 5.8),
             legend_position='bottom',
         )
-        + scale_color_discrete(labels={
-            'recall_mean': 'Recall',
-            'precision_mean': 'Precision'
-        })
-        + scale_shape_discrete(labels={
-            'recall_mean': 'Recall',
-            'precision_mean': 'Precision'
-        })
+        + scale_color_manual(values=model_colors)
+        + scale_shape_manual(values=model_shapes)
     )
     
     if output_dir:
@@ -401,7 +406,7 @@ def create_coverage_plot_models(dfAll_other_perc, output_dir=None):
         p9
         + scale_linetype_discrete(labels={
             '0': 'Dirty & Clean',
-            '1': 'Dirty & Class',
+            '1': 'Dirty & Type',
             '2': 'just Dirty'
         })
         + scale_color_discrete(labels={
@@ -455,13 +460,12 @@ def export_execution_stats_csv(all_exceptionLi, output_dir=None):
         temp_df['Executable Rules P'] = (temp_df['Executable Rules'] / temp_df['All Rules']) * 100
         
         # Map promptId and ruleInfoText
-        temp_df['promptId'] = temp_df['promptId'].replace('Just Dirty').replace('Dirty & Class').replace('Dirty & Clean')
         temp_df['promptId'] = temp_df['promptId'].astype(str).replace({
-            '0': 'Dirty & Clean',
-            '1': 'Just Dirty', 
-            '2': 'Dirty & Class'
+            'Dirty & Clean': '0', 'Dirty & Type': '1', 'Just Dirty': '2'
         })
-        temp_df['ruleInfoText'] = temp_df['ruleInfoText'].replace('noParam', 'No Parameter').replace('Param', 'Parameter')
+        temp_df['ruleInfoText'] = temp_df['ruleInfoText'].replace({
+            'noParam': 'No Parameter', 'Param': 'Parameter'
+        })
         
         # Add datasetName (convert to proper case)
         temp_df['datasetName'] = [f"{x[0].upper()}{x[1:]}" for x in temp_df['datasetName']]
@@ -504,11 +508,11 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Generate rule evaluation plots')
-    parser.add_argument('--input-dir', type=str, default=None,
+    parser.add_argument('--input-dir', type=str, default="pub/dq_rule_generation/data/results_eval",
                         help='Directory containing evaluation result CSV files')
-    parser.add_argument('--output-dir', type=str, default=None,
+    parser.add_argument('--output-dir', type=str, default="plots",
                         help='Directory to save plots')
-    parser.add_argument('--dataset', type=str, default='PCI',
+    parser.add_argument('--dataset', type=str, default='hospital',
                         help='Dataset name for model comparison plot')
     parser.add_argument('--latest-only', action='store_true',
                         help='Only process the latest file for each dataset')
@@ -531,8 +535,11 @@ if __name__ == "__main__":
     export_execution_stats_csv(all_exceptionLi, output_dir=args.output_dir)
     
     # Create and save plots
-    create_model_comparison_plot(
+    plot_result = create_model_comparison_plot(
         sumEvalResAllDf_filtered,
         dataset_name=args.dataset,
         output_dir=args.output_dir
     )
+    
+    if plot_result is None:
+        print("Plot creation failed. Check the error message above.")

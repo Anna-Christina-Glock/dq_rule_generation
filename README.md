@@ -166,6 +166,7 @@ selected_rules, coverage_by_rule, covered_pks, covered_cols = greedy_rule_select
 
 ### Ollama (Local)
 
+If you do not have Ollame installed you can download it from here (https://ollama.com/download)
 For local Ollama integration, ensure your Ollama server is running:
 
 ```bash
@@ -173,7 +174,7 @@ For local Ollama integration, ensure your Ollama server is running:
 ollama serve
 
 # Pull a model
-ollama pull gemma-4-31B-it-FP8-Dynamic
+ollama run gemma4
 ```
 
 ### OpenAI (Cloud)

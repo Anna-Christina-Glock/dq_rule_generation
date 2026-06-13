@@ -49,8 +49,12 @@ configs/*.json
 results/
 llmTests/
 data/rule_eval/output/
+data/results_eval
+data/results_gen
+plots/*
 *.csv
 !*dirty_lab.csv
+!*clean.csv
 !*.csv.example
 
 # R plots output

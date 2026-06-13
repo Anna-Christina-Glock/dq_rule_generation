@@ -7,7 +7,7 @@ This script serves as the main entry point for running the rule generation pipel
 import logging
 from pathlib import Path
 
-from .main_server_parallel import main_rule_gen
+from main_server_parallel import main_rule_gen
 
 # Configure logging
 logging.basicConfig(

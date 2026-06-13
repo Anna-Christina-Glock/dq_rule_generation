@@ -440,7 +440,6 @@ def generate_prompt(
     return prompt.strip()
 
 
-def main():
-    
-if __name__ == "__main__":
-    main()
+# def main():
+# if __name__ == "__main__":
+#     main()
