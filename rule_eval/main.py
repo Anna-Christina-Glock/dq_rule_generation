@@ -1,344 +1,248 @@
-"""
-Main Runner for Rule Evaluation Pipeline
+"""Command-line entry point for the LeDQeR rule-evaluation pipeline.
 
-This script provides a one-click interface for running the complete rule evaluation
-pipeline. It reads a configuration file (parameter.json) and orchestrates the
-evaluation, including comprehensive rule validation and parallel large-dataset testing.
+Run from the repository root:
 
-Usage:
-    python pub/dq_rule_generation/rule_eval/main.py --config path/to/parameter.json
+    python -m rule_eval.main --config rule_eval/parameter.json
 """
+
+from __future__ import annotations
 
 import argparse
 import json
-import time
+import logging
 import pickle
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import gc
+from typing import Any
 
 import great_expectations as gx
 import pandas as pd
 
-from parallel_eval import validate_large_dataset
-from evaluate_rules import check_all_rules
-from prepare_selection_data import prepare_selection_data_from_suite_li
-from evaluate_rules import (
-    save_suite_as_json,
+from .evaluate_rules import (
+    check_all_rules,
     get_suite_from_json,
-    get_precision_recall_from_validation,
-    get_precision_recall_from_validation_per_rule_col,
-    get_precision_recall_from_validation_per_col,
-    get_dtype_corr_df,
-    _get_default_precision_recall,
-    _get_default_precision_recall_per_rule_col,
-    _get_default_precision_recall_per_col,
-    get_validation_result
+    save_suite_as_json,
 )
+from .parallel_eval import validate_large_dataset
+from .prepare_selection_data import prepare_selection_data_from_suite_li
+
+logger = logging.getLogger(__name__)
 
 
-def load_config(config_path: str) -> dict:
-    """Load configuration from a JSON file."""
-    with open(config_path, 'r') as f:
-        return json.load(f)
+def load_config(config_path: str | Path) -> dict[str, Any]:
+    """Load an evaluation configuration file."""
+    with Path(config_path).open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _dataset_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the compact and per-dataset configuration formats."""
+    if config.get("dataSets"):
+        specs = []
+        for raw_spec in config["dataSets"]:
+            spec = dict(raw_spec)
+            spec.setdefault("name", spec.get("generationResult"))
+            spec.setdefault("evaluationData", [])
+            if isinstance(spec["evaluationData"], str):
+                spec["evaluationData"] = [spec["evaluationData"]]
+            specs.append(spec)
+        return specs
+
+    generation_files = config.get("dataFiles", [])
+    evaluation_files = config.get("dataFilesBig", [])
+    if len(generation_files) == len(evaluation_files):
+        evaluation_by_generation = [[name] for name in evaluation_files]
+    else:
+        evaluation_by_generation = [list(evaluation_files) for _ in generation_files]
+    return [
+        {
+            "name": generation_file,
+            "generationResult": generation_file,
+            "evaluationData": evaluation_by_generation[index],
+            "allColumnCount": config.get("allColumnCount"),
+        }
+        for index, generation_file in enumerate(generation_files)
+    ]
+
+
+def _require_column_count(spec: dict[str, Any]) -> int:
+    count = spec.get("allColumnCount")
+    if not isinstance(count, int) or count < 1:
+        raise ValueError(
+            f"Dataset {spec.get('name')!r} needs a positive allColumnCount"
+        )
+    return count
+
+
+def _result_stem(config: dict[str, Any], spec: dict[str, Any]) -> str:
+    stem = str(spec["name"])
+    if config.get("useOnlyRelevantRules", True):
+        stem += "_onlyRelevantRules"
+    return stem
+
+
+def _read_csv(directory: Path, name: str) -> pd.DataFrame:
+    path = directory / f"{name}.csv"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return pd.read_csv(path)
 
 
 def run_comprehensive_evaluation(
-    config: dict,
-    poll_data_name: str,
-    use_data_type_field: bool,
-    use_only_relevant_rules: bool
-) -> tuple:
-    """
-    Run comprehensive rule evaluation for a single dataset.
-    
-    Args:
-        config: Configuration dictionary
-        poll_data_name: Name of the polluted data file
-        use_data_type_field: Whether to apply data type corrections
-        use_only_relevant_rules: Whether to use only relevant rules
-        
-    Returns:
-        Tuple of (suite_list, suite_all, suite_relevant, file_suffix)
-    """
-    directory = Path(config['dataIn'])
-    df_res_all = pd.read_csv(directory / f'{poll_data_name}.csv')
-    
-    # Filter for dirty rows only (as per original behavior)
-    df_res_all = df_res_all.query('isDirty')
-    
-    # Build file suffix
-    str_add = ''
-    if use_data_type_field:
-        str_add += '_convertData'
-    if use_only_relevant_rules:
-        str_add += '_OnlyRelevanRules'
-    fname = f'{poll_data_name}{str_add}_valChange_newValInfo_blub0'
-    
-    # Run evaluation
-    suite_li, suite_all, suite_relevant = check_all_rules(
-        df_res_all,
-        all_col_count=14,
-        use_data_type_field=use_data_type_field,
-        use_only_relevant_rules=use_only_relevant_rules
+    config: dict[str, Any],
+    spec: dict[str, Any],
+) -> tuple[list[dict], gx.ExpectationSuite, gx.ExpectationSuite, pd.DataFrame]:
+    """Parse and evaluate generated rules for one dataset."""
+    source = _read_csv(Path(config["dataIn"]), spec["generationResult"])
+    if "isDirty" in source.columns:
+        source = source.query("isDirty == 1").reset_index(drop=True)
+
+    suite_list, suite_all, suite_relevant = check_all_rules(
+        source,
+        all_col_count=_require_column_count(spec),
+        use_only_relevant_rules=config.get("useOnlyRelevantRules", True),
     )
-    
-    return suite_li, suite_all, suite_relevant, fname
+    return suite_list, suite_all, suite_relevant, source
 
 
 def save_results(
-    config: dict,
-    suite_li: list,
-    fname: str,
-    suite_all: gx.ExpectationSuite = None,
-    suite_relevant: gx.ExpectationSuite = None
-) -> None:
-    """Save evaluation results to files."""
-    data_out = Path(config['dataOut'])
-    suite_out = Path(config['suiteOut'])
-    
-    # Save as pickle
-    with open(data_out / f'{fname}.pkl', 'wb') as f:
-        pickle.dump(suite_li, f)
-    
-    # Save as CSV
-    try:
-        pd.DataFrame(suite_li).to_csv(data_out / f'{fname}.csv')
-    except Exception as e:
-        print(f"CSV save error: {e}")
-    
-    # Prepare and save selection data
-    try:
-        print("Preparing selection data (df_pairs, df_rules)...")
-        # Re-read the full dataset to get pk values
-        df_res_all_full = pd.read_csv(directory / f'{poll_data_name}.csv')
-        # Use isDirty=1 only (dirty rows)
-        df_res_all_dirty = df_res_all_full.query('isDirty == 1').reset_index(drop=True)
-        
-        df_pairs, df_rules = prepare_selection_data_from_suite_li(suite_li, df_res_all_dirty, use_only_relevant_rules=use_only_relevant_rules)
-        
-        # Save selection data
-        df_pairs.to_csv(data_out / f'{fname}_df_pairs.csv', index=False)
-        df_rules.to_csv(data_out / f'{fname}_df_rules.csv', index=False)
-        print(f"Selection data saved: {fname}_df_pairs.csv, {fname}_df_rules.csv")
-    except Exception as e:
-        print(f"Selection data save error: {e}")
-    
-    # Save suites
-    if suite_all is not None:
-        try:
-            save_suite_as_json(suite_all, suite_out / f'{fname}_suite_all.json')
-        except Exception as e:
-            print(f"Suite save error: {e}")
-            
-    if suite_relevant is not None:
-        try:
-            save_suite_as_json(suite_relevant, suite_out / f'{fname}_suite_relevant.json')
-        except Exception as e:
-            print(f"Relevant suite save error: {e}")
-
-
-def print_evaluation_stats(suite_li: list) -> None:
-    """Print evaluation statistics."""
-    rules_not_run = 0
-    rules_run = 0
-    
-    for idx, row in pd.DataFrame(suite_li).loc[:, ['rule_count', 'exception_count']].iterrows():
-        if row['rule_count'] == row['exception_count']:
-            rules_not_run += 1
-        else:
-            rules_run += 1
-    
-    print(f"\nRules Not Run: {rules_not_run}")
-    print(f"Rules Run: {rules_run}")
-    print(f"Total Rules: {len(suite_li)}")
-
-
-def run_big_test(
-    config: dict,
-    poll_data_big_name: str,
+    config: dict[str, Any],
+    stem: str,
+    suite_list: list[dict],
+    source: pd.DataFrame,
     suite_all: gx.ExpectationSuite,
-    fname: str
-) -> dict:
-    """
-    Run parallel validation on a large dataset.
-    
-    Args:
-        config: Configuration dictionary
-        poll_data_big_name: Name of the big data file
-        suite_all: The suite to validate against
-        fname: Base filename for output
-        
-    Returns:
-        Dictionary with validation statistics
-    """
-    directory = Path(config['dataIn'])
-    data_out = Path(config['dataOut'])
-    
-    df_data_big = pd.read_csv(directory / f'{poll_data_big_name}.csv')
-    
-    # Extract config parameters
-    max_rows = 1000000  # Default, can be overridden
-    max_workers = config.get('max_workers', 10)
-    window_size = config.get('window_size', 1000)
-    suite_window_size = config.get('suite_window_size', 10)
-    
-    # Run parallel validation
-    result = validate_large_dataset(
-        df=df_data_big,
-        suite=suite_all,
-        window_size=window_size,
-        suite_window_size=suite_window_size,
-        max_workers=max_workers
+    suite_relevant: gx.ExpectationSuite,
+) -> None:
+    """Persist evaluation rows, selection inputs, and both rule suites."""
+    data_out = Path(config["dataOut"])
+    suite_out = Path(config["suiteOut"])
+    data_out.mkdir(parents=True, exist_ok=True)
+    suite_out.mkdir(parents=True, exist_ok=True)
+
+    with (data_out / f"{stem}.pkl").open("wb") as handle:
+        pickle.dump(suite_list, handle)
+    pd.DataFrame(suite_list).to_csv(data_out / f"{stem}.csv", index=False)
+
+    pairs, rules = prepare_selection_data_from_suite_li(
+        suite_list,
+        source,
+        use_only_relevant_rules=config.get("useOnlyRelevantRules", True),
     )
-    
-    # Extract statistics
-    run_rule = result['suite_stats']['rule_count']
-    not_run_rule = result['suite_stats']['not_run_count']
-    
-    stats = {
-        'pollDataBigName': poll_data_big_name,
-        'total_rows': result['total_rows'],
-        'window_count': result['window_count'],
-        'run_rule': run_rule,
-        'not_run_rule': not_run_rule,
-        'rule_all': run_rule + not_run_rule,
-        'total_execution_time': result['suite_stats']['total_time'],
-        'avg_suite_time': result['suite_stats']['total_time'] / len(result['window_stats']) if result['window_stats'] else 0
-    }
-    
-    # Save statistics
-    pd.DataFrame([stats]).to_csv(
-        data_out / f'{fname}_BigName_{poll_data_big_name}_ExcecPara.csv',
-        index=False
+    pairs.to_csv(data_out / f"{stem}_df_pairs.csv", index=False)
+    rules.to_csv(data_out / f"{stem}_df_rules.csv", index=False)
+    save_suite_as_json(suite_all, str(suite_out / f"{stem}_suite_all.json"))
+    save_suite_as_json(
+        suite_relevant,
+        str(suite_out / f"{stem}_suite_relevant.json"),
     )
-    
-    # Save per-window timing
-    window_stats_df = pd.DataFrame(result['window_stats'])
-    window_stats_df.to_csv(
-        data_out / f'{fname}_BigName_{poll_data_big_name}_resTimeLi.csv',
-        index=False
-    )
-    
-    return stats
 
 
-def main(config_path: str = None) -> None:
-    """
-    Main entry point for the rule evaluation pipeline.
-    
-    Args:
-        config_path: Path to the configuration file. If None, uses default location.
-    """
-    # Parse arguments
-    parser = argparse.ArgumentParser(description='Run rule evaluation pipeline')
-    parser.add_argument('--config', type=str, default=None,
-                        help='Path to parameter.json configuration file')
-    parser.add_argument('--config-dir', type=str, default='rule_eval',
-                        help='Directory containing parameter.json (default: llmTests/rule_Generation/greatExpectations/config)')
-    args = parser.parse_args()
-    
-    # Determine config path
-    if args.config:
-        config_path = args.config
-    else:
-        config_path = Path(args.config_dir) / 'parameter.json'
-    
-    # Load configuration
-    print(f"Loading configuration from: {config_path}")
-    config = load_config(str(config_path))
-    
-    # Extract common config values
-    use_data_type_field = config.get('useDataTypeField', False)
-    use_only_relevant_rules = config.get('useOnlyRelevantRules', True)
-    is_run_big_test = config.get('isRunBigTest', False)
-    only_run_big = config.get('onlyRunBig', False)
-    
-    # Get data files
-    poll_data_name_vec = config.get('dataFiles', [])
-    poll_data_big_name_vec = config.get('dataFilesBig', [])
-    
-    # Store all big test results
-    run_big_li = []
-    
-    # Phase 1: Comprehensive evaluation for all datasets
-    if not only_run_big:
-        print("\n" + "=" * 60)
-        print("Phase 1: Comprehensive Rule Evaluation")
-        print("=" * 60)
-        
-        start_time_extract = time.time()
-        
-        for poll_data_name in poll_data_name_vec:
-            print(f"\nProcessing: {poll_data_name}")
-            
-            suite_li, suite_all, suite_relevant, fname = run_comprehensive_evaluation(
-                config, poll_data_name, use_data_type_field, use_only_relevant_rules
+def run_large_evaluation(
+    config: dict[str, Any],
+    spec: dict[str, Any],
+    stem: str,
+    suite: gx.ExpectationSuite,
+) -> list[dict[str, Any]]:
+    """Evaluate a selected suite on every configured held-out dataset."""
+    data_in = Path(config["dataIn"])
+    data_out = Path(config["dataOut"])
+    data_out.mkdir(parents=True, exist_ok=True)
+    summaries = []
+
+    for evaluation_name in spec.get("evaluationData", []):
+        data = _read_csv(data_in, evaluation_name)
+        result = validate_large_dataset(
+            data,
+            suite,
+            window_size=config.get("windowSize", 100_000),
+            suite_window_size=config.get("suiteWindowSize", 1),
+            max_workers=config.get("maxWorkers", 1),
+            regex_sample_rows=config.get("regexPrecheckRows", 200),
+            regex_time_budget=config.get("regexPrecheckSeconds", 0.01),
+        )
+        summary = {
+            "dataset": spec["name"],
+            "evaluationData": evaluation_name,
+            "totalRows": result["total_rows"],
+            "windowCount": result["window_count"],
+            "rulesRun": result["suite_stats"]["rule_count"],
+            "rulesNotRun": result["suite_stats"]["not_run_count"],
+            "totalExecutionTime": result["suite_stats"]["total_time"],
+            "removedRegexRules": len(
+                result["suite_stats"]["removed_regex_rules"]
+            ),
+        }
+        summaries.append(summary)
+        with (data_out / f"{stem}_{evaluation_name}_large.json").open(
+            "w", encoding="utf-8"
+        ) as handle:
+            json.dump(result, handle, indent=2, default=str)
+
+    if summaries:
+        pd.DataFrame(summaries).to_csv(
+            data_out / f"{stem}_large_summary.csv", index=False
+        )
+    return summaries
+
+
+def run(config_path: str | Path) -> list[dict[str, Any]]:
+    """Run the configured evaluation pipeline and return large-test summaries."""
+    config = load_config(config_path)
+    specs = _dataset_specs(config)
+    if not specs:
+        raise ValueError("No datasets configured")
+
+    all_summaries = []
+    for spec in specs:
+        stem = _result_stem(config, spec)
+        suite_kind = (
+            "relevant" if config.get("useOnlyRelevantRules", True) else "all"
+        )
+        suite_path = Path(config["suiteOut"]) / f"{stem}_suite_{suite_kind}.json"
+
+        if config.get("onlyRunBig", False):
+            if not suite_path.is_file():
+                raise FileNotFoundError(suite_path)
+            evaluation_suite = get_suite_from_json(str(suite_path))
+        else:
+            suite_list, suite_all, suite_relevant, source = (
+                run_comprehensive_evaluation(config, spec)
             )
-            
-            # Print statistics
-            print(f"Total rules processed: {len(suite_li)}")
-            print_evaluation_stats(suite_li)
-            
-            # Save results
-            save_results(config, suite_li, fname, suite_all, suite_relevant)
-            print(f"Results saved with filename: {fname}")
-        
-        end_time_extract = time.time()
-        print(f"\nComprehensive evaluation completed in: {end_time_extract - start_time_extract:.2f} seconds")
-    
-    # Phase 2: Parallel validation on large datasets
-    if is_run_big_test or only_run_big:
-        print("\n" + "=" * 60)
-        print("Phase 2: Parallel Large Dataset Validation")
-        print("=" * 60)
-        
-        for poll_data_big_name in poll_data_big_name_vec:
-            print(f"\nProcessing Big Dataset: {poll_data_big_name}")
-            
-            if only_run_big:
-                # Load existing suite for big test
-                fname = poll_data_big_name  # Will be overridden
-                # Find the relevant suite for this big dataset
-                for poll_data_name in poll_data_name_vec:
-                    str_add = ''
-                    if use_data_type_field:
-                        str_add += '_convertData'
-                    if use_only_relevant_rules:
-                        str_add += '_OnlyRelevanRules'
-                    fname = f'{poll_data_name}{str_add}_valChange_newValInfo_blub0'
-                    suite_path = Path(config['suiteOut']) / f'{fname}_suite_relevant.json'
-                    if suite_path.exists():
-                        print(f"Loading suite from: {suite_path}")
-                        suite_all = get_suite_from_json(str(suite_path))
-                        break
-            else:
-                # Re-run comprehensive to get suite
-                suite_li, suite_all, suite_relevant, fname = run_comprehensive_evaluation(
-                    config, poll_data_name_vec[0], use_data_type_field, use_only_relevant_rules
-                )
-                save_results(config, suite_li, fname, suite_all, suite_relevant)
-            
-            # Run big test
-            stats = run_big_test(config, poll_data_big_name, suite_all, fname)
-            
-            print(f"Execution time: {stats['total_execution_time']:.2f} seconds")
-            print(f"Rules run: {stats['run_rule']}, Rules not run: {stats['not_run_rule']}")
-            print(f"Total rules: {stats['rule_all']}")
-            
-            run_big_li.append(stats)
-    
-    # Print summary
-    if run_big_li:
-        print("\n" + "=" * 60)
-        print("Summary: Big Dataset Results")
-        print("=" * 60)
-        for stats in run_big_li:
-            print(f"\n{stats['pollDataBigName']}:")
-            print(f"  Rows: {stats['total_rows']}")
-            print(f"  Execution time: {stats['total_execution_time']:.2f} seconds")
-            print(f"  Rules run: {stats['run_rule']}")
+            save_results(
+                config,
+                stem,
+                suite_list,
+                source,
+                suite_all,
+                suite_relevant,
+            )
+            evaluation_suite = (
+                suite_relevant
+                if config.get("useOnlyRelevantRules", True)
+                else suite_all
+            )
+            logger.info(
+                "%s: evaluated %s generated-response rows",
+                spec["name"],
+                len(suite_list),
+            )
+
+        if config.get("isRunBigTest", False) or config.get("onlyRunBig", False):
+            all_summaries.extend(
+                run_large_evaluation(config, spec, stem, evaluation_suite)
+            )
+    return all_summaries
 
 
-if __name__ == '__main__':
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate generated DQ rules")
+    parser.add_argument(
+        "--config",
+        default="rule_eval/parameter.json",
+        help="Evaluation configuration JSON",
+    )
+    arguments = parser.parse_args()
+    run(arguments.config)
+
+
+if __name__ == "__main__":
     main()

@@ -1,0 +1,189 @@
+prompt_label,Modelname_short,datasetName,error_code,value
+Dirty & Clean,Gemma,PCI,con,0.4395136006426469
+Dirty & Clean,GLM,PCI,con,0.9317331943348743
+Dirty & Clean,Qwen,PCI,con,0.5096692521401158
+Dirty & Clean,Gemma,PCI,dmv,0.5716551410955768
+Dirty & Clean,GLM,PCI,dmv,0.6824561805907782
+Dirty & Clean,Qwen,PCI,dmv,0.647701151983644
+Dirty & Clean,Gemma,PCI,dov,1.0
+Dirty & Clean,GLM,PCI,dov,0.9843444069972717
+Dirty & Clean,Qwen,PCI,dov,0.9986666856665146
+Dirty & Clean,Gemma,PCI,ebv,1.0
+Dirty & Clean,GLM,PCI,ebv,0.965647546897547
+Dirty & Clean,Qwen,PCI,ebv,0.9795471014492754
+Dirty & Clean,Gemma,PCI,emv,1.0
+Dirty & Clean,GLM,PCI,emv,1.0
+Dirty & Clean,Qwen,PCI,emv,1.0
+Dirty & Clean,Gemma,PCI,ics,0.9855956563398274
+Dirty & Clean,GLM,PCI,ics,0.9834090434419382
+Dirty & Clean,Qwen,PCI,ics,0.988121792517703
+Dirty & Clean,Gemma,PCI,ifo,1.0
+Dirty & Clean,GLM,PCI,ifo,1.0
+Dirty & Clean,Qwen,PCI,ifo,1.0
+Dirty & Clean,Gemma,PCI,mfv,0.9511139860689197
+Dirty & Clean,GLM,PCI,mfv,0.8853036035601825
+Dirty & Clean,Qwen,PCI,mfv,0.9065721254300484
+Dirty & Clean,Gemma,PCI,spm,0.8012797055204053
+Dirty & Clean,GLM,PCI,spm,0.8770614037397121
+Dirty & Clean,Qwen,PCI,spm,0.8028577193255642
+Dirty & Clean,Gemma,Flights,emv,1.0
+Dirty & Clean,GLM,Flights,emv,1.0
+Dirty & Clean,Qwen,Flights,emv,1.0
+Dirty & Clean,Gemma,Flights,ifo,1.0
+Dirty & Clean,GLM,Flights,ifo,0.8887407407407407
+Dirty & Clean,Qwen,Flights,ifo,0.8857142857142857
+Dirty & Clean,Gemma,Flights,spm,0.2811530307661167
+Dirty & Clean,GLM,Flights,spm,0.9440191350220849
+Dirty & Clean,Qwen,Flights,spm,0.47252092823363356
+Dirty & Clean,Gemma,Tax,ifo,0.8773698828643883
+Dirty & Clean,GLM,Tax,ifo,0.8381177655480421
+Dirty & Clean,Qwen,Tax,ifo,0.7852808013232019
+Dirty & Clean,Gemma,Tax,spm,1.0
+Dirty & Clean,GLM,Tax,spm,1.0
+Dirty & Clean,Qwen,Tax,spm,1.0
+Dirty & Clean,Gemma,Beers,ifo,1.0
+Dirty & Clean,GLM,Beers,ifo,0.9497413825823053
+Dirty & Clean,Qwen,Beers,ifo,0.9881754563690524
+Dirty & Clean,Gemma,Hospital,spm,0.7778405564482276
+Dirty & Clean,GLM,Hospital,spm,0.869653287629478
+Dirty & Clean,Qwen,Hospital,spm,0.7241605658091341
+Dirty & Type,Gemma,PCI,con,0.31684890600259263
+Dirty & Type,GLM,PCI,con,0.8897213221384234
+Dirty & Type,Qwen,PCI,con,0.4398946145416196
+Dirty & Type,Gemma,PCI,dmv,0.48347281213880056
+Dirty & Type,GLM,PCI,dmv,0.6238205898729431
+Dirty & Type,Qwen,PCI,dmv,0.5431200758361865
+Dirty & Type,Gemma,PCI,dov,0.9399912208245943
+Dirty & Type,GLM,PCI,dov,0.934204140141767
+Dirty & Type,Qwen,PCI,dov,0.8830459558372019
+Dirty & Type,Gemma,PCI,ebv,1.0
+Dirty & Type,GLM,PCI,ebv,1.0
+Dirty & Type,Qwen,PCI,ebv,0.9362844036697248
+Dirty & Type,Gemma,PCI,emv,1.0
+Dirty & Type,GLM,PCI,emv,0.9916666666666667
+Dirty & Type,Qwen,PCI,emv,1.0
+Dirty & Type,Gemma,PCI,ics,0.975428032646011
+Dirty & Type,GLM,PCI,ics,0.9834881078327652
+Dirty & Type,Qwen,PCI,ics,0.9749563213772616
+Dirty & Type,Gemma,PCI,ifo,0.9959114959114959
+Dirty & Type,GLM,PCI,ifo,0.9901234567901235
+Dirty & Type,Qwen,PCI,ifo,0.9629803683771698
+Dirty & Type,Gemma,PCI,mfv,0.9380180480939839
+Dirty & Type,GLM,PCI,mfv,0.8955758248485521
+Dirty & Type,Qwen,PCI,mfv,0.9135365676396379
+Dirty & Type,Gemma,PCI,spm,0.8315210521169039
+Dirty & Type,GLM,PCI,spm,0.8896875030606327
+Dirty & Type,Qwen,PCI,spm,0.79572241746024
+Dirty & Type,Gemma,Flights,emv,1.0
+Dirty & Type,GLM,Flights,emv,1.0
+Dirty & Type,Qwen,Flights,emv,1.0
+Dirty & Type,Gemma,Flights,ifo,1.0
+Dirty & Type,GLM,Flights,ifo,0.96
+Dirty & Type,Qwen,Flights,ifo,1.0
+Dirty & Type,Gemma,Flights,spm,1.0
+Dirty & Type,GLM,Flights,spm,0.9933181371234467
+Dirty & Type,Qwen,Flights,spm,0.9835299901671584
+Dirty & Type,Gemma,Tax,ifo,0.9043847162685303
+Dirty & Type,GLM,Tax,ifo,0.8551171306297267
+Dirty & Type,Qwen,Tax,ifo,0.8140448644166403
+Dirty & Type,Gemma,Tax,spm,1.0
+Dirty & Type,GLM,Tax,spm,1.0
+Dirty & Type,Qwen,Tax,spm,1.0
+Dirty & Type,Gemma,Beers,ifo,0.9885131540131116
+Dirty & Type,GLM,Beers,ifo,0.9863140177565055
+Dirty & Type,Qwen,Beers,ifo,0.9299951214556912
+Dirty & Type,Gemma,Hospital,spm,0.7183534507751916
+Dirty & Type,GLM,Hospital,spm,0.9089005865695501
+Dirty & Type,Qwen,Hospital,spm,0.6506691009499361
+Dirty & Column,Gemma,PCI,con,0.4859589041095891
+Dirty & Column,GLM,PCI,con,0.832900432900433
+Dirty & Column,Qwen,PCI,con,0.4963543381932167
+Dirty & Column,Gemma,PCI,dmv,0.5380392156862746
+Dirty & Column,GLM,PCI,dmv,0.6224598930481283
+Dirty & Column,Qwen,PCI,dmv,0.6178646857656377
+Dirty & Column,Gemma,PCI,dov,0.962148337595908
+Dirty & Column,GLM,PCI,dov,0.902803738317757
+Dirty & Column,Qwen,PCI,dov,0.8821042966980732
+Dirty & Column,Gemma,PCI,ebv,1.0
+Dirty & Column,GLM,PCI,ebv,1.0
+Dirty & Column,Qwen,PCI,ebv,0.9533068783068783
+Dirty & Column,Gemma,PCI,emv,1.0
+Dirty & Column,GLM,PCI,emv,1.0
+Dirty & Column,Qwen,PCI,emv,1.0
+Dirty & Column,Gemma,PCI,ics,0.9362989323843416
+Dirty & Column,GLM,PCI,ics,0.9812280701754388
+Dirty & Column,Qwen,PCI,ics,0.9649943060831312
+Dirty & Column,Gemma,PCI,ifo,0.966225165562914
+Dirty & Column,GLM,PCI,ifo,1.0
+Dirty & Column,Qwen,PCI,ifo,0.9197542889209557
+Dirty & Column,Gemma,PCI,mfv,0.9424528988037052
+Dirty & Column,GLM,PCI,mfv,0.8822035029712195
+Dirty & Column,Qwen,PCI,mfv,0.9335500616612951
+Dirty & Column,Gemma,PCI,spm,0.8237319762510603
+Dirty & Column,GLM,PCI,spm,0.8815523657628921
+Dirty & Column,Qwen,PCI,spm,0.7946717169013298
+Dirty & Column,Gemma,Flights,emv,1.0
+Dirty & Column,Qwen,Flights,emv,1.0
+Dirty & Column,Gemma,Flights,ifo,1.0
+Dirty & Column,GLM,Flights,ifo,0.7788888888888889
+Dirty & Column,Qwen,Flights,ifo,0.8471111111111111
+Dirty & Column,Gemma,Flights,spm,0.9922123893805308
+Dirty & Column,GLM,Flights,spm,0.947148475909538
+Dirty & Column,Qwen,Flights,spm,0.7750610219394258
+Dirty & Column,Gemma,Tax,ifo,0.7505725211207486
+Dirty & Column,GLM,Tax,ifo,0.7247253287338415
+Dirty & Column,Qwen,Tax,ifo,0.6741537639272717
+Dirty & Column,Gemma,Tax,spm,1.0
+Dirty & Column,GLM,Tax,spm,1.0
+Dirty & Column,Qwen,Tax,spm,1.0
+Dirty & Column,Gemma,Beers,ifo,0.9826376008948622
+Dirty & Column,GLM,Beers,ifo,0.9864969902401964
+Dirty & Column,Qwen,Beers,ifo,0.9349373320453108
+Dirty & Column,Gemma,Hospital,spm,0.7173089272332478
+Dirty & Column,GLM,Hospital,spm,0.9214405342594354
+Dirty & Column,Qwen,Hospital,spm,0.7284123333487045
+Just Dirty,Gemma,PCI,con,0.6200525743322596
+Just Dirty,GLM,PCI,con,0.8969416896235078
+Just Dirty,Qwen,PCI,con,0.7812691686844229
+Just Dirty,Gemma,PCI,dmv,0.5148706600735147
+Just Dirty,GLM,PCI,dmv,0.61599696866762
+Just Dirty,Qwen,PCI,dmv,0.5927470942839795
+Just Dirty,Gemma,PCI,dov,0.9878228449203026
+Just Dirty,GLM,PCI,dov,0.9841397849462366
+Just Dirty,Qwen,PCI,dov,0.9884865134865134
+Just Dirty,Gemma,PCI,ebv,1.0
+Just Dirty,GLM,PCI,ebv,1.0
+Just Dirty,Qwen,PCI,ebv,0.9798021631982474
+Just Dirty,Gemma,PCI,emv,1.0
+Just Dirty,GLM,PCI,emv,0.9928571428571429
+Just Dirty,Qwen,PCI,emv,0.9958333333333333
+Just Dirty,Gemma,PCI,ics,0.9850022321521702
+Just Dirty,GLM,PCI,ics,0.9824380165289256
+Just Dirty,Qwen,PCI,ics,0.9799915573271327
+Just Dirty,Gemma,PCI,ifo,0.9136188774606854
+Just Dirty,GLM,PCI,ifo,0.855327868852459
+Just Dirty,Qwen,PCI,ifo,0.9458201058201059
+Just Dirty,Gemma,PCI,mfv,0.9358333983186219
+Just Dirty,GLM,PCI,mfv,0.8766963862863683
+Just Dirty,Qwen,PCI,mfv,0.892303563959133
+Just Dirty,Gemma,PCI,spm,0.7820764845637989
+Just Dirty,GLM,PCI,spm,0.8636831755161505
+Just Dirty,Qwen,PCI,spm,0.7963852504242434
+Just Dirty,Gemma,Flights,emv,1.0
+Just Dirty,Qwen,Flights,emv,1.0
+Just Dirty,Gemma,Flights,ifo,1.0
+Just Dirty,GLM,Flights,ifo,0.9050505050505051
+Just Dirty,Qwen,Flights,ifo,0.824078947368421
+Just Dirty,Gemma,Flights,spm,1.0
+Just Dirty,GLM,Flights,spm,1.0
+Just Dirty,Qwen,Flights,spm,0.9283754920923062
+Just Dirty,Gemma,Tax,ifo,0.7313439707297553
+Just Dirty,GLM,Tax,ifo,0.6186740009659644
+Just Dirty,Gemma,Tax,spm,1.0
+Just Dirty,GLM,Tax,spm,1.0
+Just Dirty,Gemma,Beers,ifo,0.9922814815572074
+Just Dirty,GLM,Beers,ifo,0.9551784061340964
+Just Dirty,Qwen,Beers,ifo,1.0
+Just Dirty,Gemma,Hospital,spm,0.5613586326128509
+Just Dirty,GLM,Hospital,spm,0.8997665914230053
+Just Dirty,Qwen,Hospital,spm,0.635393611552754

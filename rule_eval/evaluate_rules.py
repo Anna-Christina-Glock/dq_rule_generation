@@ -6,21 +6,20 @@ It includes validation, precision/recall calculation, filtering pipeline functio
 data type correction, suite persistence, and comprehensive evaluation.
 """
 
-import traceback
-import great_expectations as gx
-from pathlib import Path
-import pandas as pd
-import re
-import json
-import itertools
-import logging
-import pickle
+import datetime
 import gc
-from functools import reduce
+import itertools
+import json
+import logging
 import operator
-from typing import List, Dict, Any, Optional, Tuple
+import re
+from functools import reduce
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-# Configure logging
+import great_expectations as gx
+import pandas as pd
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -34,83 +33,128 @@ def get_batch(
     asset_name: str = "data_asset",
     batch_definition_name: str = "batch"
 ) -> tuple:
-    """
-    Create a Great Expectations context and batch for validation.
-    
-    This version uses idempotent data source handling - it checks if the
-    data source exists and reuses it, otherwise creates a new one.
-    
-    Args:
-        df: DataFrame to create batch from
-        data_source_name: Name for the data source
-        asset_name: Name for the data asset
-        batch_definition_name: Name for the batch definition
-        
-    Returns:
-        Tuple of (context, batch)
+    """Create a Great Expectations dataframe batch.
+
+    The datasource is replaced on each call because GX batches retain their
+    dataframe by reference. Reusing an existing datasource can otherwise
+    validate a later suite against stale data.
     """
     context = gx.get_context()
-    
-    batch = None
-    
-    # Data Source: get-or-create (idempotent)
-    ds_names = set(context.data_sources.all())
-    if data_source_name in ds_names:
-        data_source = context.data_sources.get(data_source_name)
-    else:
-        data_source = context.data_sources.add_pandas(name=data_source_name)
-    
-    # Data Asset: get-or-create
-    asset_names = list()
-    for data_ass in data_source.assets:
-        asset_names.append(data_ass.name)
-    if asset_name in asset_names:
-        data_asset_clean = data_source.get_asset(asset_name)
-    else:
-        data_asset_clean = data_source.add_dataframe_asset(name=asset_name)
-    
-    batch_definition_name_clean = batch_definition_name
-    batch_definition_clean = data_asset_clean.add_batch_definition_whole_dataframe(batch_definition_name_clean)
-    assert batch_definition_clean.name == batch_definition_name_clean
-    batch_parameters_clean = {"dataframe": df}
-    
+    existing = {source["name"] for source in context.list_datasources()}
+    if data_source_name in existing:
+        context.delete_datasource(name=data_source_name)
+
+    data_source = context.data_sources.add_pandas(name=data_source_name)
+    asset = data_source.add_dataframe_asset(name=asset_name)
+    asset.add_batch_definition_whole_dataframe(batch_definition_name)
     batch = (
         context.data_sources.get(data_source_name)
         .get_asset(asset_name)
         .get_batch_definition(batch_definition_name)
-        .get_batch(batch_parameters=batch_parameters_clean)
+        .get_batch(batch_parameters={"dataframe": df})
     )
     return context, batch
 
 
-def calculate_precision_recall(true_err_idx: list, pred_err_idx: list) -> dict:
-    """
-    Calculate precision and recall based on true and predicted error indices.
-    
-    Args:
-        true_err_idx: List of true error indices
-        pred_err_idx: List of predicted error indices
-        
-    Returns:
-        Dictionary with precision, recall, TP, FP, FN
-    """
+def validate_with_typed_between(
+    df: pd.DataFrame,
+    suite: gx.ExpectationSuite,
+    result_format: dict,
+) -> dict:
+    """Validate a suite while preserving numeric/date semantics for between rules."""
+    between = [
+        expectation
+        for expectation in suite.expectations
+        if expectation.expectation_type == "expect_column_values_to_be_between"
+    ]
+    if not between:
+        _, batch = get_batch(df)
+        return batch.validate(suite, result_format=result_format)
+
+    typed_df = df.copy()
+    between_suite = gx.ExpectationSuite(name=f"{suite.name}_between")
+    other_suite = gx.ExpectationSuite(name=f"{suite.name}_other")
+    for expectation in suite.expectations:
+        expectation_copy = expectation.copy()
+        if expectation_copy.expectation_type != "expect_column_values_to_be_between":
+            other_suite.add_expectation(expectation_copy)
+            continue
+
+        bounds = [
+            bound
+            for bound in (expectation_copy.min_value, expectation_copy.max_value)
+            if bound is not None
+        ]
+        is_date = any(
+            isinstance(bound, (datetime.date, datetime.datetime, pd.Timestamp))
+            for bound in bounds
+        )
+        if is_date:
+            try:
+                typed_df[expectation_copy.column] = pd.to_datetime(
+                    typed_df[expectation_copy.column], errors="coerce"
+                )
+            except ValueError:
+                typed_df[expectation_copy.column] = pd.to_datetime(
+                    typed_df[expectation_copy.column], errors="coerce", utc=True
+                ).dt.tz_localize(None)
+            if expectation_copy.min_value is not None:
+                expectation_copy.min_value = pd.Timestamp(expectation_copy.min_value)
+            if expectation_copy.max_value is not None:
+                expectation_copy.max_value = pd.Timestamp(expectation_copy.max_value)
+        else:
+            typed_df[expectation_copy.column] = pd.to_numeric(
+                typed_df[expectation_copy.column], errors="coerce"
+            )
+        between_suite.add_expectation(expectation_copy)
+
+    results = []
+    statistics = {
+        "evaluated_expectations": 0,
+        "successful_expectations": 0,
+        "unsuccessful_expectations": 0,
+    }
+    for frame, partition, source_name in (
+        (df, other_suite, "validation_other"),
+        (typed_df, between_suite, "validation_between"),
+    ):
+        if not partition.expectations:
+            continue
+        _, batch = get_batch(frame, data_source_name=source_name)
+        validation = batch.validate(partition, result_format=result_format)
+        results.extend(validation["results"])
+        for key in statistics:
+            statistics[key] += validation["statistics"].get(key, 0)
+
+    statistics["success"] = all(result.get("success") for result in results)
+    return {
+        "success": statistics["success"],
+        "results": results,
+        "statistics": statistics,
+    }
+
+
+def calculate_precision_recall(
+    true_err_idx: list,
+    pred_err_idx: list,
+) -> tuple[float, float, int, int, int]:
+    """Return precision, recall, TP, FP, and FN for two cell-index sets."""
     true_set = set(true_err_idx)
     pred_set = set(pred_err_idx)
-    
-    TP = len(true_set & pred_set)
-    FP = len(pred_set - true_set)
-    FN = len(true_set - pred_set)
-    
-    precision = TP / (TP + FP) if (TP + FP) != 0 else 0
-    recall = TP / (TP + FN) if (TP + FN) != 0 else 0
-    
-    return {
-        'precision': precision,
-        'recall': recall,
-        'TP': TP,
-        'FP': FP,
-        'FN': FN
-    }
+    true_positive = len(true_set & pred_set)
+    false_positive = len(pred_set - true_set)
+    false_negative = len(true_set - pred_set)
+    precision = (
+        true_positive / (true_positive + false_positive)
+        if true_positive + false_positive
+        else 0.0
+    )
+    recall = (
+        true_positive / (true_positive + false_negative)
+        if true_positive + false_negative
+        else 0.0
+    )
+    return precision, recall, true_positive, false_positive, false_negative
 
 
 def get_validation_result(
@@ -151,14 +195,12 @@ def get_validation_result(
         err_rule = ''
     
     for val_res in validation_results.get('results', []):
-        # Get column names from expectation
         col_key = [k for k in val_res['expectation_config']['kwargs'].keys() if 'column' in k]
         col_name = [val_res['expectation_config']['kwargs'][x] for x in col_key]
         
         rule_type = val_res['expectation_config']['type']
         description = val_res['expectation_config'].get('description')
         
-        # Extract result information
         num_wrong = 0
         wrong_vals = None
         wrong_idx = None
@@ -169,7 +211,6 @@ def get_validation_result(
             wrong_vals = val_res['result'].get('unexpected_list')
             wrong_idx = val_res['result'].get('unexpected_index_list')
         
-        # Check if this expectation matches the error columns
         col_in_list = any([cn in err_col_li for cn in col_name])
         
         if isinstance(col_name, list):
@@ -220,7 +261,7 @@ def get_precision_recall_per_row(val_res_df: pd.DataFrame, all_col_arr: list) ->
     Returns:
         Dictionary with precision, recall, TP, FP, FN at row level
     """
-    true_err_col = val_res_df['errCol'].iloc[0] if 'errCol' in val_res_df.columns else []
+    true_err_col = val_res_df["err_col"].iloc[0] if "err_col" in val_res_df else []
     true_non_err_col = [col for col in all_col_arr if col not in true_err_col]
     
     tmp_df = val_res_df[val_res_df['wrong_vals'].notna()]
@@ -348,7 +389,6 @@ def fill_expectation_suite(
                 else:
                     code_str = gen_code_dict.get('code', str(gen_code_dict))
                 
-                # Execute the expectation code
                 eval(f"suite.add_expectation({code_str})")
                 
                 if note is not None:
@@ -362,7 +402,6 @@ def fill_expectation_suite(
                 eval_li.append({'j': j, 'can_run': True, 'exception': None})
                 
             elif isinstance(gen_code, str):
-                # Handle string case
                 continue
                 
         except Exception as e:
@@ -377,74 +416,49 @@ def fill_expectation_suite(
     return eval_li, suite, exception_count, j, suite_all
 
 
+def _flatten_expectations(value: Any) -> list[dict]:
+    """Return every nested expectation object that contains executable code."""
+    if isinstance(value, dict):
+        if isinstance(value.get("code"), str):
+            return [value]
+        flattened = []
+        for child in value.values():
+            flattened.extend(_flatten_expectations(child))
+        return flattened
+    if isinstance(value, list):
+        flattened = []
+        for child in value:
+            flattened.extend(_flatten_expectations(child))
+        return flattened
+    return []
+
+
 def extract_expectations_from_json(
     answer_str: str,
-    json_marker: str = "great_expectations_final"
-) -> list:
-    """
-    Extract expectations from LLM response JSON.
-    
-    Args:
-        answer_str: LLM response string
-        json_marker: Marker string to find in response
-        
-    Returns:
-        List of expectation dictionaries
-    """
-    # Try to extract JSON from response
-    json_patterns = [
-        r'```json\s*\{(\s*)"great_expectations_final"',
-        r'```json\s*\{(\s*)"great_expectations_final"',
-        r'"great_expectations_final"'
+    json_marker: str = "great_expectations_final",
+) -> list[dict]:
+    """Extract executable expectation objects from an LLM response."""
+    if not isinstance(answer_str, str) or json_marker not in answer_str:
+        return []
+
+    decoder = json.JSONDecoder()
+    variants = [
+        answer_str.replace("# Final Json Format", ""),
+        answer_str.replace("# Final Json Format", "")
+        .replace("\n]}\n}", "\n}]\n}")
+        .replace("\n]}\n", "\n}]\n"),
     ]
-    
-    extract_fin_json = answer_str
-    
-    for pattern in json_patterns:
-        match = re.search(pattern, answer_str)
-        if match:
-            # Split at the marker
-            split_arr = re.split(pattern, answer_str)
-            if len(split_arr) > 1:
-                extract_fin_json = split_arr[-1]
-            break
-    
-    if not extract_fin_json or len(extract_fin_json) <= 1:
-        return []
-    
-    # Clean up JSON string
-    json_str = extract_fin_json.strip()
-    json_str = json_str.replace('# Final Json Format', '')
-    json_str = re.sub(r'\n\]}\n}', '\n}]\n}', json_str)
-    json_str = re.sub(r'\n\]}\n', '\n}]\n', json_str)
-    
-    try:
-        json_data = json.loads(json_str)
-        expectations = json_data.get('great_expectations_final', [])
-        
-        if isinstance(expectations, dict):
-            # Handle single expectation case
-            key_val = list(expectations.keys())[0]
-            if isinstance(expectations[key_val], dict):
-                expectations = [expectations[key_val]]
-            else:
-                expectations = expectations[key_val]
-        elif isinstance(expectations, list) and len(expectations) > 0:
-            # Handle list case - extract inner dict if needed
-            if isinstance(expectations[0], dict):
-                if 'code' in expectations[0]:
-                    pass  # Already in correct format
-                elif list(expectations[0].keys())[0] in ['column', 'code']:
-                    pass  # Already in correct format
-                else:
-                    key = list(expectations[0].keys())[0]
-                    expectations = expectations[0][key] if isinstance(expectations[0][key], list) else [expectations[0][key]]
-        
-        return expectations if isinstance(expectations, list) else [expectations]
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        return []
+    for text in variants:
+        for start in (index for index, char in enumerate(text) if char == "{"):
+            try:
+                payload, _ = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and json_marker in payload:
+                return _flatten_expectations(payload[json_marker])
+
+    logger.warning("Could not parse %s from model response", json_marker)
+    return []
 
 
 def validate_rule_on_dataframe(
@@ -471,10 +485,8 @@ def validate_rule_on_dataframe(
             "include_unexpected_rows": True
         }
     
-    # Create suite
+    gx.get_context()
     suite = gx.ExpectationSuite(name=suite_name)
-    
-    # Fill suite with expectations
     _, suite, exception_count, j, _ = fill_expectation_suite(expectations, suite)
     
     if exception_count > 0:
@@ -484,12 +496,10 @@ def validate_rule_on_dataframe(
             'validation_results': None
         }
     
-    # Get batch
     try:
-        context, batch = get_batch(df)
-        
-        # Validate
-        validation_results = batch.validate(suite, result_format=result_format)
+        validation_results = validate_with_typed_between(
+            df, suite, result_format=result_format
+        )
         
         return {
             'can_run': True,
@@ -675,7 +685,6 @@ def save_suite_as_json(suite: gx.ExpectationSuite, path_str: str) -> None:
     export_path = Path(path_str)
     export_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Convert suite to JSON-serializable dict
     suite_dict = suite.to_json_dict()
     export_path.write_text(json.dumps(suite_dict, indent=2))
 
@@ -701,11 +710,10 @@ def get_suite_from_json(suite_json_path: str) -> gx.ExpectationSuite:
 def check_all_rules(
     df_res_all: pd.DataFrame,
     all_col_count: int = 14,
-    use_data_type_field: bool = False,
     use_only_relevant_rules: bool = False,
     suite_relevant: gx.ExpectationSuite = None,
-    row_range: Optional[Tuple[int, int]] = None
-) -> Tuple[list, gx.ExpectationSuite, gx.ExpectationSuite]:
+    row_range: Optional[Tuple[int, int]] = None,
+) -> tuple:
     """
     Validate all rules from a dataframe of error specifications.
     
@@ -716,30 +724,24 @@ def check_all_rules(
     Args:
         df_res_all: DataFrame with columns ['errCol', 'errRule', 'answer', 'isDirty']
         all_col_count: Number of data columns in the dataframe
-        use_data_type_field: Whether to apply data type corrections
         use_only_relevant_rules: Whether to use only relevant rules for evaluation
         suite_relevant: Optional existing suite for relevant rules
         
     Returns:
         Tuple of (suite_list, suite_all, suite_relevant)
     """
-    batch_li = []
-    context, batch = get_batch(df_res_all.iloc[:, 0:all_col_count])
-    
-    # Validate the Data Against the Suite
+    get_batch(df_res_all.iloc[:, 0:all_col_count])
     res_format = {
         "result_format": "COMPLETE",
-        "include_unexpected_rows": True
+        "include_unexpected_rows": True,
     }
-    
+
     suite_li = []
-    json_extract_str_pattern = "# Final Json Format"
     suite_all = gx.ExpectationSuite(name="suite_with_all_rules")
     
     if suite_relevant is None:
         suite_relevant = gx.ExpectationSuite(name="suite_with_relevant_rules")
     
-    # Determine row range to process
     if row_range:
         start_row, end_row = row_range
         indices = range(start_row, min(end_row, len(df_res_all)))
@@ -750,105 +752,26 @@ def check_all_rules(
         df_row = df_res_all.iloc[[i]]
         df_dirty = df_row.iloc[:, 0:all_col_count]
         
-        # Create an Expectation Suite
         expectation_suite_name = f"vllm_test_manuell_pk_{df_row.iloc[0].loc['pk']}"
         suite = gx.ExpectationSuite(name=expectation_suite_name)
         ans_str = df_row.iloc[0].loc['answer']
         
-        # Extract JSON from answer
-        extract_fin_json = ans_str.split(json_extract_str_pattern)
-        
-        if len(extract_fin_json) > 1:
-            # Use the part after the marker
-            extract_fin_json = extract_fin_json[1]
-        else:
-            # Fallback to regex search for the JSON block
-            regex_pattern = r'```json\s*\{.*"great_expectations_final".*?\}\s*```'
-            match = re.search(regex_pattern, ans_str, re.DOTALL)
-            if match:
-                extract_fin_json = match.group(0)
-            else:
-                # Final attempt: split by the marker string itself
-                marker = '"great_expectations_final"'
-                if marker in ans_str:
-                    extract_fin_json = ans_str[ans_str.find('{'):]
-                else:
-                    extract_fin_json = None
-        
-        if extract_fin_json is None:
+        json_str_list = extract_expectations_from_json(ans_str)
+        if not json_str_list:
             suite_dict = {
-                'i': i, 'suite': None, 'val_res': None,
-                'validation_results_clean': None
+                "i": i,
+                "suite": None,
+                "val_res": None,
+                "validation_results_clean": None,
             }
             suite_dict.update(df_row.iloc[0].to_dict())
-            suite_dict.update({
-                'rule_count': 0, 'exception_count': 0, 'exception_li': []
-            })
+            suite_dict.update(
+                {"rule_count": 0, "exception_count": 0, "exception_li": []}
+            )
             suite_dict.update(_get_default_precision_recall())
             suite_li.append(suite_dict)
             continue
         
-        # Parse the JSON
-        json_split_arr = re.split(r'```(json)*', extract_fin_json.strip())
-        json_str_to_load = None
-        for str_part in json_split_arr:
-            if str_part is not None:
-                if 'great_expectations_final' in str_part:
-                    json_str_to_load = str_part
-                    break
-        
-        if json_str_to_load is None:
-            suite_dict = {
-                'i': i, 'suite': None, 'val_res': None,
-                'validation_results_clean': None
-            }
-            suite_dict.update(df_row.iloc[0].to_dict())
-            suite_dict.update({
-                'rule_count': 0, 'exception_count': 0, 'exception_li': []
-            })
-            suite_dict.update(_get_default_precision_recall())
-            suite_li.append(suite_dict)
-            continue
-        
-        # Clean up JSON string
-        try:
-            if '\n]}\n}' in json_str_to_load:
-                # Replace backslash sequences to fix JSON
-                cleaned_str = json_str_to_load.replace('\n]}\n}', '\n}]\n}')
-                json_expectation_str = json.loads(cleaned_str)
-            else:
-                cleaned_str = json_str_to_load.replace('\n]}\n', '\n}]\n}')
-                json_expectation_str = json.loads(cleaned_str)
-        except Exception as e:
-            suite_dict = {
-                'i': i, 'suite': None, 'val_res': None,
-                'validation_results_clean': None
-            }
-            suite_dict.update(df_row.iloc[0].to_dict())
-            suite_dict.update({
-                'rule_count': 0, 'exception_count': 0, 'exception_li': []
-            })
-            suite_dict.update(_get_default_precision_recall())
-            suite_li.append(suite_dict)
-            continue
-        
-        # Get expectations
-        json_str_list = json_expectation_str.get('great_expectations_final', [])
-        
-        if len(json_str_list) == 0:
-            suite_dict = {
-                'i': i, 'suite': None, 'val_res': None,
-                'validation_results_clean': None
-            }
-            suite_dict.update(df_row.iloc[0].to_dict())
-            suite_dict.update({
-                'rule_count': 0, 'exception_count': 0, 'exception_li': []
-            })
-            suite_dict.update(_get_default_precision_recall())
-            suite_li.append(suite_dict)
-            continue
-        
-        # Process expectations
         j = -1
         eval_li = []
         exception_count = 0
@@ -858,15 +781,10 @@ def check_all_rules(
             json_str_list, suite, suite_all, note=note_str
         )
         
-        # Apply data type corrections if enabled
-        if use_data_type_field:
-            df_dirty_dt_corr = get_dtype_corr_df(df_dirty, json_str_list)
-        
-        # Get batch
-        context, batch = get_batch(df_dirty)
-        
         try:
-            validation_results_clean = batch.validate(suite, result_format=res_format)
+            validation_results_clean = validate_with_typed_between(
+                df_dirty, suite, result_format=res_format
+            )
         except Exception as e:
             suite_dict = {
                 'i': i, 'suite': suite, 'val_res': None,
@@ -926,19 +844,17 @@ def check_all_rules(
                 # Compare positions
                 df_err_col = _compare_positions(df_err_col, err_col_i_sp, err_rule_i_sp)
                 
-                context_per_rule_col, batch_per_rule_col = get_batch(df_err_col.reset_index())
-                
-                df_clean_col = df_res_all.query(f'not errCol.str.contains("{err_col_i_sp}")')
-                df_clean_col.loc[:, 'isDirty'] = False
-                df_clean_col.loc[:, 'errCol'] = ''
-                df_clean_col.loc[:, 'errRule'] = ''
+                df_clean_col = df_res_all.query(
+                    f'not errCol.str.contains("{err_col_i_sp}")'
+                ).copy()
+                df_clean_col.loc[:, "isDirty"] = False
+                df_clean_col.loc[:, "errCol"] = ""
+                df_clean_col.loc[:, "errRule"] = ""
                 df_col_all = pd.concat(
-                    [df_err_col, df_clean_col.sample(
-                        max(min(len(df_err_col) * 5, 250), 100)
-                    )],
-                    ignore_index=True, sort=False
+                    [df_err_col, df_clean_col],
+                    ignore_index=True,
+                    sort=False,
                 )
-                context_per_col, batch_per_col = get_batch(df_col_all.reset_index())
                 
                 suite_per_rule_col = gx.ExpectationSuite(name='eval_perRule_perCol')
                 
@@ -989,8 +905,16 @@ def check_all_rules(
                     val_li_col.append(val_dict)
                     continue
                 
-                validation_results_clean_all = batch_per_rule_col.validate(suite_per_rule_col, result_format=res_format)
-                validation_results_clean_col = batch_per_col.validate(suite_per_rule_col, result_format=res_format)
+                validation_results_clean_all = validate_with_typed_between(
+                    df_err_col.reset_index(),
+                    suite_per_rule_col,
+                    result_format=res_format,
+                )
+                validation_results_clean_col = validate_with_typed_between(
+                    df_col_all.reset_index(),
+                    suite_per_rule_col,
+                    result_format=res_format,
+                )
                 val_res_dict_all = get_validation_result(validation_results_clean_all, df_err_col.reset_index(), is_one_row=False, err_col=err_col_val)
                 val_res_dict_all_col = get_validation_result(validation_results_clean_col, df_col_all.reset_index(), is_one_row=False, err_col=err_col_val)
                 
@@ -1075,7 +999,7 @@ def _get_default_precision_recall_per_col() -> dict:
 
 def get_precision_recall_from_validation(val_res_df: pd.DataFrame, all_col_arr: list) -> dict:
     """Calculate precision and recall from validation results."""
-    true_err_col = val_res_df['errCol'].iloc[0] if 'errCol' in val_res_df.columns else []
+    true_err_col = val_res_df["err_col"].iloc[0] if "err_col" in val_res_df else []
     true_non_err_col = [col for col in all_col_arr if col not in true_err_col]
     
     tmp_df = val_res_df[val_res_df['wrong_vals'].notna()]

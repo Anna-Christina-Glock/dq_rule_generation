@@ -1,11 +1,16 @@
 {
-    "dataIn": "data/results_gen/",
-    "dataFiles": ["<name of the rule generation results>"],
-    "dataFilesBig": ["<name of the test data file>"],
-    "dataOut": "data/results_eval/",
-    "suiteOut": "data/results_eval/suite_out",
-    "useDataTypeField": false,
-    "useOnlyRelevantRules": true,
-    "isRunBigTest": true,
-    "onlyRunBig": false
+  "dataIn": "data/results_gen",
+  "dataFiles": ["<generation-result-file-without-csv-extension>"],
+  "dataFilesBig": ["<held-out-data-file-without-csv-extension>"],
+  "allColumnCount": null,
+  "suiteOut": "data/results_eval/suite_out",
+  "dataOut": "data/results_eval",
+  "useOnlyRelevantRules": true,
+  "onlyRunBig": false,
+  "isRunBigTest": true,
+  "windowSize": 100000,
+  "suiteWindowSize": 1,
+  "maxWorkers": 1,
+  "regexPrecheckRows": 200,
+  "regexPrecheckSeconds": 0.01
 }

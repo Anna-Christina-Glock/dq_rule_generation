@@ -56,6 +56,9 @@ plots/*
 !*dirty_lab.csv
 !*clean.csv
 !*.csv.example
+!data/plot_inputs/
+!data/plot_inputs/*.csv
+data/plots/
 
 # R plots output
 r_plots/*.pdf
