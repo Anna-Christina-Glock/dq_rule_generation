@@ -1,0 +1,78 @@
+{
+  "location": "Public",
+  "modelConfigs": ["glm", "gemma", "qwen"],
+  "promptIds": [9, 11, 10, 8],
+  "expectationLiIds": [0, 2],
+  "maxRows": null,
+  "adaptive": {
+    "enabled": true,
+    "max_threads": 50,
+    "min_threads": 1,
+    "ttft_window": 20,
+    "ttft_decrease_if_above_s": 5.0,
+    "decrease_factor": 0.5,
+    "cooldown_s": 15.0,
+    "ttft_increase_if_below_s": 2.0,
+    "increase_step": 2
+  },
+  "Public": {
+    "Paths": {
+      "Data": "data/in",
+      "Result": "data/results_gen"
+    },
+    "File": {
+      "Input": ["beers", "flights", "hospital", "tax"]
+    }
+  },
+  "Files": {
+    "beers": {
+      "name": "beers_dirty_lab.csv",
+      "cleanFile": "beers_clean.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "OutputSuffix": "beers",
+      "n_cols": 11,
+      "id_column": "pk",
+      "err_dect_info": "The data describe beers and their breweries. City and state values should be consistent."
+    },
+    "flights": {
+      "name": "flights_dirty_lab.csv",
+      "cleanFile": "flights_clean.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "OutputSuffix": "flights",
+      "n_cols": 7,
+      "id_column": "pk",
+      "err_dect_info": "The data describe scheduled and actual flight departure and arrival times."
+    },
+    "hospital": {
+      "name": "hospital_dirty_lab.csv",
+      "cleanFile": "hospital_clean.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "OutputSuffix": "hospital",
+      "n_cols": 20,
+      "id_column": "pk",
+      "err_dect_info": "The data describe hospitals, ownership, and addresses. City, state, and ZIP code values should be consistent."
+    },
+    "tax": {
+      "name": "tax_dirty_lab.csv",
+      "cleanFile": "tax_clean.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "OutputSuffix": "tax",
+      "n_cols": 15,
+      "id_column": "pk",
+      "err_dect_info": "The data contain personal and tax-related records."
+    },
+    "pci": {
+      "name": "trainGenData_adressPerson_dirtyPol_whole_6000_100_1.csv",
+      "cleanFile": "trainGenData_adressPerson_6000_new_vorwahlFix.csv",
+      "encoding": "utf-8",
+      "delimiter": ",",
+      "OutputSuffix": "pci",
+      "n_cols": 14,
+      "id_column": "pk"
+    }
+  }
+}

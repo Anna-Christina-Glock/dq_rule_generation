@@ -1,0 +1,20 @@
+{
+  "glm": {
+    "llm-package": "openai",
+    "api_key": "EMPTY",
+    "base_url": "http://localhost:8000/v1",
+    "modelname": "cyankiwi/GLM-4.7-Flash-AWQ-4bit"
+  },
+  "gemma": {
+    "llm-package": "openai",
+    "api_key": "EMPTY",
+    "base_url": "http://localhost:8000/v1",
+    "modelname": "RedHatAI/gemma-4-31B-it-FP8-Dynamic"
+  },
+  "qwen": {
+    "llm-package": "openai",
+    "api_key": "EMPTY",
+    "base_url": "http://localhost:8000/v1",
+    "modelname": "Qwen/Qwen3.8-27B-FP8"
+  }
+}
